@@ -75,7 +75,7 @@ jobs:
     - name: Build Kernel
       run: |
        find ./ -name Kconfig -exec dos2unix {} \;
-       export PATH=$(pwd)/proton-clang/bin/:$(pwd)/proton-clang/bin/:$PATH
+       export PATH=$(pwd)/proton-clang/bin/:$PATH
        export ARCH=arm64
        export SUBARCH=arm64
        export LD=ld.lld
