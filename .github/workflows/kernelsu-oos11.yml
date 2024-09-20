@@ -2,13 +2,12 @@ name: Build OnePlus-Sm8150-Kernel-OOS11
 on:
   workflow_dispatch:
   schedule:
-      # Run once a week on Sunday at midnight. See http://crontab.guru
-      - cron: '0 21 * * *'
+    - cron: '0 21 * * *'
   push:
     branches:
       - master
   pull_request:
-      branches:
+    branches:
       - master
 
 jobs:
@@ -20,38 +19,38 @@ jobs:
       CCACHE_MAXSIZE: "2G"
       CCACHE_HARDLINK: "true"
       KERNEL_DEFCONFIG: "dora_defconfig"
-      KERNEL_CMDLINE: "ARCH=arm64 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-androidkernel- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 O=out"
+      KERNEL_CMDLINE: "ARCH=arm64 O=out"
+      
     steps:
     - name: Checkout
       uses: actions/checkout@v4
       with:
         submodules: 'true'
         fetch-depth: 1
+
     - name: Set up ccache
       uses: hendrikmuhs/ccache-action@v1.2
-      
+
     - name: Remove unnecessary files
       run: |
         sudo rm -rf /opt/ghc
         sudo rm -rf "/usr/local/share/boost"
         sudo rm -rf /usr/share/dotnet
         sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+
     - name: Install dependencies
       run: |
         sudo apt-get update -y 
-        sudo apt install gcc-aarch64-linux-gnu -y
-        sudo apt install gcc-arm-linux-gnueabi -y
-        sudo apt install clang-14 -y
-        sudo apt install binutils make python3 libssl-dev build-essential bc  bison flex unzip libssl-dev ca-certificates xz-utils mkbootimg cpio device-tree-compiler git git-lfs dos2unix -y
-        git clone https://github.com/kdrag0n/proton-clang --depth=1
-        git clone https://github.com/snowwolf725/AnyKernel3 -b oneplus7 --depth=1
+        sudo apt install -y gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
+          clang-14 binutils make python3 libssl-dev build-essential \
+          bc bison flex unzip ca-certificates xz-utils mkbootimg \
+          cpio device-tree-compiler git git-lfs dos2unix \
+          binutils-aarch64-linux-gnu
+
+        git clone --depth=1 https://github.com/kdrag0n/proton-clang "$HOME/toolchains/proton-clang"
+        git clone --depth=1 -b oneplus7 https://github.com/snowwolf725/AnyKernel3
         rm -rf AnyKernel3/.git
-    - name: Remove unnecessary files
-      run: |
-        sudo rm -rf /opt/ghc
-        sudo rm -rf "/usr/local/share/boost"
-        sudo rm -rf /usr/share/dotnet
-        sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+
     - name: Config KSU
       run: |
         curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v0.9.5
@@ -71,21 +70,24 @@ jobs:
         cd ..
         ./check-kernel-config arch/arm64/configs/$KERNEL_DEFCONFIG -w    
 
-    
+    - name: Check Linker
+      run: |
+        aarch64-linux-gnu-ld -v || echo "Linker not found"
+
     - name: Build Kernel
       run: |
-       find ./ -name Kconfig -exec dos2unix {} \;
-       export PATH=$(pwd)/proton-clang/bin/:$PATH
-       export ARCH=arm64
-       export SUBARCH=arm64
-       export LD=ld.lld
-       export BRAND_SHOW_FLAG=oneplus
-       export TARGET_PRODUCT=msmnile
-       make $KERNEL_CMDLINE $KERNEL_DEFCONFIG CC="ccache clang-14"
-       make $KERNEL_CMDLINE CC="ccache clang-14" -j$(nproc --all)
-       cp out/arch/arm64/boot/Image AnyKernel3
+        find ./ -name Kconfig -exec dos2unix {} \;
+        export PATH="$HOME/toolchains/proton-clang/bin:$PATH"
+        export ARCH=arm64
+        export SUBARCH=arm64
+        export LD=ld.lld
+        export BRAND_SHOW_FLAG=oneplus
+        export TARGET_PRODUCT=msmnile
+        make $KERNEL_CMDLINE $KERNEL_DEFCONFIG CC=clang CROSS_COMPILE=aarch64-linux-gnu- LD=ld.lld -j$(nproc --all) || exit 1
+        cp out/arch/arm64/boot/Image AnyKernel3
+
     - name: Upload Kernel-SU
       uses: actions/upload-artifact@v4
       with:
         name: OP7-OOS11-kernel-SU
-        path: "AnyKernel3/*"
+        path: "AnyKernel3/**"
