@@ -2,13 +2,12 @@ name: Build OnePlus-Sm8150-Kernel-OOS11
 on:
   workflow_dispatch:
   schedule:
-      # Run once a week on Sunday at midnight. See http://crontab.guru
-      - cron: '0 21 * * *'
+    - cron: '0 0 * * 0'  # Run at midnight on Sundays
   push:
     branches:
       - master
   pull_request:
-      branches:
+    branches:
       - master
 
 jobs:
@@ -21,49 +20,44 @@ jobs:
       CCACHE_HARDLINK: "true"
       KERNEL_DEFCONFIG: "blu_spark_defconfig"
       KERNEL_CMDLINE: "ARCH=arm64 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-androidkernel- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 O=out"
+
     steps:
     - name: Checkout
       uses: actions/checkout@v4
       with:
         submodules: 'true'
         fetch-depth: 1
+        
     - name: Set up ccache
       uses: hendrikmuhs/ccache-action@v1.2
       
     - name: Remove unnecessary files
       run: |
-        sudo rm -rf /opt/ghc
-        sudo rm -rf "/usr/local/share/boost"
-        sudo rm -rf /usr/share/dotnet
-        sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+        sudo rm -rf /opt/ghc "/usr/local/share/boost" /usr/share/dotnet "$AGENT_TOOLSDIRECTORY"
+
     - name: Install dependencies
       run: |
         sudo apt-get update -y 
-        sudo apt install gcc-aarch64-linux-gnu -y
-        sudo apt install gcc-arm-linux-gnueabi -y
-        wget https://github.com/ZyCromerZ/Clang/releases/download/17.0.0-20230725-release/Clang-17.0.0-20230725.tar.gz clang
-        tar -xf *gz
-        sudo apt install binutils make python3 libssl-dev build-essential bc  bison flex unzip libssl-dev ca-certificates xz-utils mkbootimg cpio device-tree-compiler git git-lfs dos2unix -y
-        git clone https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 aarch64 --depth=1
-        git clone https://github.com/snowwolf725/AnyKernel3 -b oneplus7 --depth=1
+        sudo apt-get install -y gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+        wget https://github.com/ZyCromerZ/Clang/releases/download/17.0.0-20230725-release/Clang-17.0.0-20230725.tar.gz
+        tar -xf Clang-17.0.0-20230725.tar.gz
+        sudo apt install -y binutils make python3 libssl-dev build-essential bc bison flex unzip ca-certificates xz-utils mkbootimg cpio device-tree-compiler git git-lfs dos2unix
+        git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 aarch64
+        git clone --depth=1 https://github.com/snowwolf725/AnyKernel3 -b oneplus7
         rm -rf AnyKernel3/.git
-    - name: Remove unnecessary files
-      run: |
-        sudo rm -rf /opt/ghc
-        sudo rm -rf "/usr/local/share/boost"
-        sudo rm -rf /usr/share/dotnet
-        sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+
     - name: Config KSU
       run: |
         sudo rm -rf ./KernelSU
         curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v0.9.5
 
-    - name: 🦾 Setup Kali-Nethunter
+    - name: Setup Kali-Nethunter
       run: |
         git clone https://github.com/tomxi1997/kali-nethunter_patches.git
-        patch -p1 < kali-nethunter_patches/add-rtl88xxau-5.6.4.2-drivers.patch
-        patch -p1 < kali-nethunter_patches/add-wifi-injection-4.14.patch
-        patch -p1 < kali-nethunter_patches/fix-ath9k-naming-conflict.patch
+        cd kali-nethunter_patches
+        patch -p1 < add-rtl88xxau-5.6.4.2-drivers.patch
+        patch -p1 < add-wifi-injection-4.14.patch
+        patch -p1 < fix-ath9k-naming-conflict.patch
         sleep 8
         git clone https://github.com/acai66/Kali-defconfig-checker kali
         cd kali
@@ -75,38 +69,29 @@ jobs:
 
     - name: Config LXC
       run: |
-        cd $GITHUB_WORKSPACE
         wget https://github.com/wu17481748/lxc-docker/releases/download/lxc-docker-2config/LXC-DOCKER-OPEN-CONFIG.sh
-        chmod 777 LXC-DOCKER-OPEN-CONFIG.sh
-         ./LXC-DOCKER-OPEN-CONFIG.sh arch/arm64/configs/${{ env.KERNEL_DEFCONFIG }} -w
+        chmod +x LXC-DOCKER-OPEN-CONFIG.sh
+        ./LXC-DOCKER-OPEN-CONFIG.sh arch/arm64/configs/${{ env.KERNEL_DEFCONFIG }} -w
 
-    - name: 开启KVM配置
+    - name: Configure Kernel Options
       run: |
-          cd $GITHUB_WORKSPACE
-          echo "CONFIG_VIRTUALIZATION=y" >> arch/arm64/configs/${{ env.KERNEL_DEFCONFIG }}
-          echo "CONFIG_KVM=y" >> arch/arm64/configs/${{ env.KERNEL_DEFCONFIG }}
-          echo "CONFIG_VHOST_NET=y" >> arch/arm64/configs/${{ env.KERNEL_DEFCONFIG }}
-          echo "CONFIG_VHOST_CROSS_ENDIAN_LEGACY=y" >> arch/arm64/configs/${{ env.KERNEL_DEFCONFIG }}
-
-    - name: 关闭ANDROID_PARANOID_NETWORK配置
-      run: |
-        cd $GITHUB_WORKSPACE
+        echo -e "CONFIG_VIRTUALIZATION=y\nCONFIG_KVM=y\nCONFIG_VHOST_NET=y\nCONFIG_VHOST_CROSS_ENDIAN_LEGACY=y" >> arch/arm64/configs/${{ env.KERNEL_DEFCONFIG }}
         sed -i '/CONFIG_ANDROID_PARANOID_NETWORK/d' arch/arm64/configs/${{ env.KERNEL_DEFCONFIG }}
         echo "# CONFIG_ANDROID_PARANOID_NETWORK is not set" >> arch/arm64/configs/${{ env.KERNEL_DEFCONFIG }}
-    
-    
+
     - name: Build Kernel
       run: |
-       find ./ -name Kconfig -exec dos2unix {} \;
-       export PATH=$(pwd)/clang/bin/:$(pwd)/aarch64/bin/:$PATH
-       export ARCH=arm64
-       export SUBARCH=arm64
-       export LD=ld.lld
-       export BRAND_SHOW_FLAG=oneplus
-       export TARGET_PRODUCT=msmnile
-       make $KERNEL_CMDLINE $KERNEL_DEFCONFIG CC="ccache clang-14"
-       make $KERNEL_CMDLINE CC="ccache clang-14" -j$(nproc --all)
-       cp out/arch/arm64/boot/Image AnyKernel3
+        find ./ -name Kconfig -exec dos2unix {} \;
+        export PATH=$(pwd)/Clang-17.0.0-20230725/bin/:$(pwd)/aarch64/bin/:$PATH
+        export ARCH=arm64
+        export SUBARCH=arm64
+        export LD=ld.lld
+        export BRAND_SHOW_FLAG=oneplus
+        export TARGET_PRODUCT=msmnile
+        make $KERNEL_CMDLINE $KERNEL_DEFCONFIG CC="ccache clang-14"
+        make $KERNEL_CMDLINE CC="ccache clang-14" -j$(nproc --all)
+        cp out/arch/arm64/boot/Image AnyKernel3
+
     - name: Upload Kernel-SU
       uses: actions/upload-artifact@v4
       with:
